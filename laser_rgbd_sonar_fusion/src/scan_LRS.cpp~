@@ -1,0 +1,112 @@
+#include <ros/ros.h>
+#include <message_filters/subscriber.h>
+#include <message_filters/synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include<sensor_msgs/LaserScan.h>
+#include<geometry_msgs/PoseWithCovarianceStamped.h>
+
+#include<math.h> //use isnan() isinf()
+#include <limits> //use infinity()
+
+typedef message_filters::sync_policies::ApproximateTime<sensor_msgs::LaserScan,geometry_msgs::PoseWithCovarianceStamped,sensor_msgs::LaserScan> MySyncPolicy;
+
+class scan_lrs
+{
+public:
+  scan_lrs();
+  ros::NodeHandle n_;
+  ros::Publisher scan_lr_pub_;
+  void scanLrCB(const sensor_msgs::LaserScan::ConstPtr& scan_l,const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& scan_t,const sensor_msgs::LaserScan::ConstPtr& scan_r);
+  
+private:
+  message_filters::Subscriber<sensor_msgs::LaserScan> *scan_l_sub_;
+  message_filters::Subscriber<geometry_msgs::PoseWithCovarianceStamped> *scan_t_sub_;
+  message_filters::Subscriber<sensor_msgs::LaserScan> *scan_r_sub_;
+  message_filters::Synchronizer<MySyncPolicy> *sync_;
+};
+
+scan_lrs::scan_lrs()
+{
+  scan_lr_pub_ = n_.advertise<sensor_msgs::LaserScan>("/scan",100);
+    
+  scan_l_sub_ = new message_filters::Subscriber<sensor_msgs::LaserScan>(n_,"/laser_scan",1);    
+  scan_t_sub_ = new message_filters::Subscriber<geometry_msgs::PoseWithCovarianceStamped>(n_,"/t_scan",1); 
+  scan_r_sub_ = new message_filters::Subscriber<sensor_msgs::LaserScan>(n_,"/xtion_scan",1);
+  sync_ = new message_filters::Synchronizer<MySyncPolicy>(MySyncPolicy(10), *scan_l_sub_,*scan_t_sub_, *scan_r_sub_);
+  sync_->registerCallback(boost::bind(&scan_lrs::scanLrCB,this, _1, _2,_3));
+}
+void scan_lrs::scanLrCB(const sensor_msgs::LaserScan::ConstPtr& scan_l,const geometry_msgs::PoseWithCovarianceStamped::ConstPtr& scan_t, const sensor_msgs::LaserScan::ConstPtr& scan_r)
+{
+  std::cout<<std::endl<<"callback:"<<scan_l->header.stamp<<" "<<scan_r->header.stamp<<std::endl;
+  
+  //filter and cut point of scan_r
+  float scan_r_buff[55];
+  for(int i=0;i<55;i++)
+  {
+    float point_avg=0;
+    int nan_num=0;
+    //Local sampling and Mean filter 
+    for(int j=-2;j<3;j++)
+    {
+      if( std::isfinite(scan_r->ranges[11*i+22+j]) &&  std::isnormal(scan_r->ranges[11*i+22+j])  )
+	point_avg +=  scan_r->ranges[11*i+22+j];
+     else
+       nan_num += 1;
+    }
+    if(nan_num<3)
+      point_avg = point_avg/(5-nan_num);
+    else
+      point_avg = std::numeric_limits<float>::infinity();
+    
+    scan_r_buff[i] = point_avg;
+  }
+  
+  //fuse scan_r_buff into scan_l
+  sensor_msgs::LaserScan scan_lr_msg;
+  scan_lr_msg.header.stamp = scan_l->header.stamp;
+  scan_lr_msg.header.frame_id = "laser";
+  scan_lr_msg.angle_min = scan_l->angle_min;
+  scan_lr_msg.angle_max = scan_l->angle_max;
+  scan_lr_msg.angle_increment = scan_l->angle_increment;
+  scan_lr_msg.time_increment = scan_l->time_increment;
+  scan_lr_msg.range_min = scan_l->range_min;
+  scan_lr_msg.range_max = scan_l->range_max;
+  //fill fusion ranges[]
+  int ranges_num = scan_l->ranges.size();
+  scan_lr_msg.ranges.resize(ranges_num);
+  scan_lr_msg.intensities.resize(ranges_num);
+  for(int i=0;i<ranges_num;i++)
+  {
+    scan_lr_msg.ranges[i] = scan_l->ranges[i];
+    scan_lr_msg.intensities[i] = 100;
+  } 
+  //fusion logic
+  for(int i=0;i<55;i++)
+  {
+    if(i<27)
+    {   
+      if(std::isinf(scan_lr_msg.ranges[(ranges_num-1)-(26-i)]) || std::isnan(scan_lr_msg.ranges[(ranges_num-1)-(26-i)]) )
+	scan_lr_msg.ranges[(ranges_num-1)-(26-i)] = scan_r_buff[i];
+      else if(std::isfinite(scan_r_buff[i]) && (scan_lr_msg.ranges[(ranges_num-1)-(26-i)] - scan_r_buff[i])>0.2)
+	scan_lr_msg.ranges[(ranges_num-1)-(26-i)] = scan_r_buff[i];
+    }
+    else
+    {
+      if(std::isinf(scan_lr_msg.ranges[i-27]) || std::isnan(scan_lr_msg.ranges[i-27]) )
+	scan_lr_msg.ranges[i-27] = scan_r_buff[i];
+      else if(std::isfinite(scan_r_buff[i]) && (scan_lr_msg.ranges[i-27] - scan_r_buff[i])>0.2)
+	scan_lr_msg.ranges[i-27] = scan_r_buff[i];
+    }
+  }
+ 
+  //scan_lr pub
+  scan_lr_pub_.publish(scan_lr_msg);  
+}
+
+int main(int argc, char** argv)
+{
+  ros::init(argc, argv, "scan_lr_node");
+  scan_lrs myscan_lrs;
+  std::cout<<"created scan_lrs obj"<<std::endl;
+  ros::spin();
+}

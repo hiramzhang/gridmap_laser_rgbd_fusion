@@ -1,0 +1,17 @@
+<launch>
+    <include file="$(find openni2_launch)/launch/openni2.launch"/>
+
+    <node pkg="depthimage_to_laserscan"  type="depthimage_to_laserscan" name="depthimage_to_laserscan" args="standalone depthimage_to_lasersacn/DepthImageToLaserScanNodelet  /camera/rgb/image_viewer">
+
+     <remap from="image" to="/camera/depth_registered/image_raw"/> 
+     <remap from="camera_info" to="/camera/depth_registered/camera_info"/>
+     <remap from="scan" to="/kinect_scan"/>
+     
+     <param name="scan_height" value="400"/>
+     <!--param name="output_frame_id" value="/kinect_scan_frame"/-->
+     <param name="range_min" value="0.45"/>
+     <param name="range_max" type="double" value="4"/>
+
+</node>
+
+</launch>
