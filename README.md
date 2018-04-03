@@ -19,3 +19,4 @@ Detect 3D obstacle by sensor fusion of 2D laser and RGB-D camera,then 3D obstacl
 @fuction: get 3D points from asus_xtion,get 2D scan by 3D points project into x-y plan.
 @input  : "depth/image"
 @output : "/xtion_scan"
+
